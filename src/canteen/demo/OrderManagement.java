@@ -74,3 +74,8 @@ public class OrderManagement {
 
 	}
 }
+
+//B1: git add . (Đưa tất cả thay đổi trong project vào khu vực theo dõi)
+//B2: git commit -m "message" (Lưu lại những thay đổi ở B1 vào máy tính)
+//B3: git push origin master (Đẩy những commit được lưu lại ở bước 2 lên github
+
