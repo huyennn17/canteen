@@ -106,9 +106,16 @@
                                 <span class="glyphicon glyphicon-cutlery"></span> View Menu
                             </a>
                         </li>
-                        <li><a href="${pageContext.request.contextPath}/prices?command=VIEW">
-                            <span class="glyphicon glyphicon-cog"></span> Configure Prices
-                        </a></li>
+                        <li>
+                        	<a href="${pageContext.request.contextPath}/prices?command=VIEW">
+                            	<span class="glyphicon glyphicon-cog"></span> Configure Prices
+                        	</a>
+                        </li>
+                        <li>
+                        	<a href="${pageContext.request.contextPath}/students?command=VIEW-STUDENT-TICKETS">
+                            	<span class="glyphicon glyphicon-signal"></span> Student Tickets
+                        	</a>
+                        </li>
                     </ul>
                 <% } else { %>
                     <ul class="nav navbar-nav">
@@ -117,9 +124,16 @@
                                 <span class="glyphicon glyphicon-cutlery"></span> View Menu
                             </a>
                         </li>
-                        <li><a href="${pageContext.request.contextPath}/payment?command=VIEW">
-                            <span class="glyphicon glyphicon-credit-card"></span> My Tickets & Payments
-                        </a></li>
+                        <li>
+	                        <a href="${pageContext.request.contextPath}/payment?command=VIEW">
+	                            <span class="glyphicon glyphicon-credit-card"></span> My Payments
+	                        </a>
+                        </li>
+                        <li>
+	                        <a href="${pageContext.request.contextPath}/payment?command=VIEW-PAID-TICKET">
+	                            <span class="glyphicon glyphicon-credit-card"></span> My Tickets
+	                        </a>
+                        </li>
                     </ul>
                 <% } %>
                 <ul class="nav navbar-nav navbar-right">

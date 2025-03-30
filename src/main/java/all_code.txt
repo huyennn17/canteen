@@ -1,0 +1,2406 @@
+package canteen.demo.controller;
+
+import java.io.IOException;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import javax.annotation.Resource;
+import javax.sql.DataSource;
+
+import canteen.demo.database.StudentDatabase;
+import canteen.demo.service.StudentService;
+import canteen.demo.entity.Student;
+import canteen.demo.database.AdminDatabase;
+import canteen.demo.service.AdminService;
+import canteen.demo.entity.Admin;
+
+public class LoginController extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    
+    @Resource(name="jdbc/canteen")
+    private DataSource dataSource;
+    private StudentService studentService;
+    private AdminService adminService;
+    
+    @Override
+    public void init() throws ServletException {
+        StudentDatabase studentDatabase = new StudentDatabase(dataSource);
+        AdminDatabase adminDatabase = new AdminDatabase(dataSource);
+        studentService = new StudentService(studentDatabase);
+        adminService = new AdminService(adminDatabase);
+    }
+
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        HttpSession session = request.getSession(false);
+        if (session != null && session.getAttribute("student") != null) {
+            response.sendRedirect(request.getContextPath() + "/dashboard.jsp");
+            return;
+        }
+        request.getRequestDispatcher("/log-in.jsp").forward(request, response);
+    }
+
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        String email = request.getParameter("email");
+        String password = request.getParameter("password");
+        
+        try {
+            // Check admin credentials first
+            Admin admin = adminService.validateLogin(email, password);
+            if (admin != null) {
+                HttpSession session = request.getSession();
+                session.setAttribute("admin", admin);
+                session.setAttribute("userType", "admin");
+                response.sendRedirect(request.getContextPath() + "/dashboard.jsp");
+                return;
+            }
+            
+            // If not admin, check student credentials
+            Student student = studentService.validateLogin(email, password);
+            if (student != null) {
+                HttpSession session = request.getSession();
+                session.setAttribute("student", student);
+                session.setAttribute("userType", "student");
+                response.sendRedirect(request.getContextPath() + "/dashboard.jsp");
+            } else {
+                request.setAttribute("error", "Invalid email or password");
+                request.getRequestDispatcher("/log-in.jsp").forward(request, response);
+            }
+        } catch (Exception e) {
+            request.setAttribute("error", "System error occurred");
+            request.getRequestDispatcher("/log-in.jsp").forward(request, response);
+        }
+    }
+}
+package canteen.demo.controller;
+
+import java.io.IOException;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+
+public class LogoutController extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.invalidate(); 
+        }
+        String redirectURL = request.getContextPath() + "/login";  
+        response.sendRedirect(redirectURL);
+    }
+}
+package canteen.demo.controller;
+
+import java.io.IOException;
+import java.sql.Date;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import javax.annotation.Resource;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.sql.DataSource;
+import java.time.LocalDate;
+import java.util.Random;
+import java.time.format.DateTimeFormatter;
+import canteen.demo.database.MenuDatabase;
+import canteen.demo.entity.*;
+import canteen.demo.service.MenuService;
+
+public class MenuController extends HttpServlet {
+    private static final long serialVersionUID = 1L;
+    
+    @Resource(name="jdbc/canteen")
+    private DataSource dataSource;
+    private MenuService menuService;
+    
+    @Override
+    public void init() throws ServletException {
+        MenuDatabase menuDb = new MenuDatabase(dataSource);
+        menuService = new MenuService(menuDb);
+    }
+
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        try {
+            String command = request.getParameter("command");
+            if (command == null) command = "VIEW";
+            
+            switch (command) {
+                case "CHECK_WEEK":
+                    checkWeek(request, response);
+                    break;
+                case "VIEW":
+                    viewMenu(request, response);
+                    break;
+                case "LOAD":
+                    loadMenu(request, response);
+                    break;
+                default:
+                    viewMenu(request, response);
+            }
+        } catch (Exception e) {
+            throw new ServletException(e);
+        }
+    }
+
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        try {
+            String command = request.getParameter("command");
+            System.out.println("POST Command received: " + command); // Debug log
+            
+            if (command == null || command.trim().isEmpty()) {
+                throw new ServletException("Command parameter is required");
+            }
+            
+            switch (command) {
+                case "CREATE":
+                    createMenu(request, response);
+                    break;
+                case "UPDATE":
+                    updateMenu(request, response);
+                    break;
+                case "GENERATE_WEEK":
+                    generateWeeklyMenu(request, response);
+                    break;
+                default:
+                    throw new ServletException("Invalid command: " + command);
+            }
+        } catch (Exception e) {
+            request.getSession().setAttribute("NOTIFICATION_MESSAGE", "Error: " + e.getMessage());
+            request.getSession().setAttribute("NOTIFICATION_TYPE", "danger");
+            response.sendRedirect(request.getContextPath() + "/menu?command=VIEW");
+        }
+    }
+
+    private void loadMenu(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        int menuId = Integer.parseInt(request.getParameter("menuId"));
+        DailyMenu menu = menuService.getMenuById(menuId);
+        
+        request.setAttribute("MENU_TO_EDIT", menu);
+        request.setAttribute("snacksList", menuService.getAllSnacks());
+        request.setAttribute("appetizersList", menuService.getAllAppetizers());
+        request.setAttribute("vegetablesList", menuService.getAllVegetables());
+        request.setAttribute("proteinsList", menuService.getAllProteins());
+        request.setAttribute("carbsList", menuService.getAllCarbohydrates());
+        request.setAttribute("dessertsList", menuService.getAllDesserts());
+        
+        request.getRequestDispatcher("/admin/edit-menu.jsp").forward(request, response);
+    }
+
+    private void createMenu(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        Date menuDate = Date.valueOf(request.getParameter("menuDate"));
+        
+        if (menuService.menuExistsForDate(menuDate.toLocalDate())) {
+            request.getSession().setAttribute("NOTIFICATION_MESSAGE", "A menu already exists for this date");
+            request.getSession().setAttribute("NOTIFICATION_TYPE", "warning");
+            response.sendRedirect("menu?command=VIEW");
+            return;
+        }
+        
+        Snack snack = new Snack(Integer.parseInt(request.getParameter("snackId")), "");
+        Appetizer appetizer = new Appetizer(Integer.parseInt(request.getParameter("appetizerId")), "");
+        Vegetable vegetable = new Vegetable(Integer.parseInt(request.getParameter("vegetableId")), "");
+        Protein protein = new Protein(Integer.parseInt(request.getParameter("proteinId")), "", "");
+        Carbohydrate carb = new Carbohydrate(Integer.parseInt(request.getParameter("carbId")), "");
+        Dessert dessert = new Dessert(Integer.parseInt(request.getParameter("dessertId")), "");
+        
+        DailyMenu menu = new DailyMenu(menuDate, snack, appetizer, vegetable, protein, carb, dessert);
+        menuService.createMenu(menu);
+        
+        request.getSession().setAttribute("NOTIFICATION_MESSAGE", "New menu created successfully!");
+        request.getSession().setAttribute("NOTIFICATION_TYPE", "success");
+        response.sendRedirect("menu?command=VIEW");
+    }
+
+    private void updateMenu(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        int menuId = Integer.parseInt(request.getParameter("menuId"));
+        Date menuDate = Date.valueOf(request.getParameter("menuDate"));
+        
+        Snack snack = new Snack(Integer.parseInt(request.getParameter("snackId")), "");
+        Appetizer appetizer = new Appetizer(Integer.parseInt(request.getParameter("appetizerId")), "");
+        Vegetable vegetable = new Vegetable(Integer.parseInt(request.getParameter("vegetableId")), "");
+        Protein protein = new Protein(Integer.parseInt(request.getParameter("proteinId")), "", "");
+        Carbohydrate carb = new Carbohydrate(Integer.parseInt(request.getParameter("carbId")), "");
+        Dessert dessert = new Dessert(Integer.parseInt(request.getParameter("dessertId")), "");
+        
+        DailyMenu menu = new DailyMenu(menuDate, snack, appetizer, vegetable, protein, carb, dessert);
+        menu.setDailyMenuId(menuId);
+        menuService.updateMenu(menu);
+        
+        request.getSession().setAttribute("NOTIFICATION_MESSAGE", "Menu updated successfully!");
+        request.getSession().setAttribute("NOTIFICATION_TYPE", "success");
+        response.sendRedirect("menu?command=VIEW");
+    }
+
+    private void viewMenu(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        String weekStartStr = request.getParameter("weekStart");
+        LocalDate weekStart;
+        
+        if (weekStartStr != null && !weekStartStr.isEmpty()) {
+            weekStart = LocalDate.parse(weekStartStr);
+            while (weekStart.getDayOfWeek().getValue() != 1) {
+                weekStart = weekStart.minusDays(1);
+            }
+        } else {
+            weekStart = LocalDate.now();
+            while (weekStart.getDayOfWeek().getValue() != 1) {
+                weekStart = weekStart.plusDays(1);
+            }
+        }
+        
+        LocalDate weekEnd = weekStart.plusDays(5);
+        
+        java.sql.Date sqlWeekStart = java.sql.Date.valueOf(weekStart);
+        java.sql.Date sqlWeekEnd = java.sql.Date.valueOf(weekEnd);
+        
+        List<DailyMenu> weeklyMenu = menuService.getWeeklyMenu(sqlWeekStart, sqlWeekEnd);
+        
+        for (int i = 0; i < 6; i++) {
+            LocalDate currentDate = weekStart.plusDays(i);
+            boolean hasMenu = weeklyMenu.stream()
+                .anyMatch(m -> m.getMenuDate().toLocalDate().equals(currentDate));
+                
+            if (!hasMenu) {
+                DailyMenu emptyMenu = new DailyMenu();
+                emptyMenu.setMenuDate(Date.valueOf(currentDate));
+                weeklyMenu.add(i, emptyMenu);
+            }
+        }
+        
+        request.setAttribute("weeklyMenu", weeklyMenu);
+        request.setAttribute("currentWeekStart", sqlWeekStart);
+        request.setAttribute("currentWeekEnd", sqlWeekEnd);
+        request.setAttribute("currentWeekStartStr", weekStart.toString());
+        
+        request.setAttribute("snacksList", menuService.getAllSnacks());
+        request.setAttribute("appetizersList", menuService.getAllAppetizers());
+        request.setAttribute("vegetablesList", menuService.getAllVegetables());
+        request.setAttribute("proteinsList", menuService.getAllProteins());
+        request.setAttribute("carbsList", menuService.getAllCarbohydrates());
+        request.setAttribute("dessertsList", menuService.getAllDesserts());
+        
+        request.getRequestDispatcher("/view-menu.jsp").forward(request, response);
+    }
+
+    private void generateWeeklyMenu(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        String weekStartStr = request.getParameter("selectedWeekStart");
+        System.out.println("Generating menu for week: " + weekStartStr); // Debug log
+
+        if (weekStartStr == null || weekStartStr.trim().isEmpty()) {
+            throw new Exception("Week start date is required");
+        }
+
+        try {
+            LocalDate weekStart = LocalDate.parse(weekStartStr);
+            
+            // Ensure we start from Monday
+            while (weekStart.getDayOfWeek().getValue() != 1) {
+                weekStart = weekStart.minusDays(1);
+            }
+
+            // Generate menus for Monday through Saturday
+            for (int i = 0; i < 6; i++) {
+                LocalDate currentDate = weekStart.plusDays(i);
+                System.out.println("Generating menu for: " + currentDate); // Debug log
+                
+                if (!menuService.menuExistsForDate(currentDate)) {
+                    DailyMenu menu = createRandomMenu(currentDate);
+                    menuService.createMenu(menu);
+                }
+            }
+
+            request.getSession().setAttribute("NOTIFICATION_MESSAGE", 
+                "Weekly menu generated successfully for week starting " + 
+                weekStart.format(DateTimeFormatter.ofPattern("MMM dd, yyyy")));
+            request.getSession().setAttribute("NOTIFICATION_TYPE", "success");
+            
+        } catch (Exception e) {
+            throw new Exception("Failed to generate weekly menu: " + e.getMessage());
+        }
+        
+        // Always redirect back to view with the selected week
+        response.sendRedirect(request.getContextPath() + "/menu?command=VIEW&weekStart=" + weekStartStr);
+    }
+
+    private DailyMenu createRandomMenu(LocalDate date) throws SQLException {
+        Random random = new Random();
+        
+        // Get all menu items
+        List<Snack> snacks = menuService.getAllSnacks();
+        List<Appetizer> appetizers = menuService.getAllAppetizers();
+        List<Vegetable> vegetables = menuService.getAllVegetables();
+        List<Protein> proteins = menuService.getAllProteins();
+        List<Carbohydrate> carbs = menuService.getAllCarbohydrates();
+        List<Dessert> desserts = menuService.getAllDesserts();
+        
+        // Validate lists are not empty
+        if (snacks.isEmpty() || appetizers.isEmpty() || vegetables.isEmpty() || 
+            proteins.isEmpty() || carbs.isEmpty() || desserts.isEmpty()) {
+            throw new SQLException("Cannot generate menu: Some menu items are missing from the database");
+        }
+        
+        // Create new menu with random items
+        DailyMenu menu = new DailyMenu();
+        menu.setMenuDate(Date.valueOf(date));
+        menu.setSnack(snacks.get(random.nextInt(snacks.size())));
+        menu.setAppetizer(appetizers.get(random.nextInt(appetizers.size())));
+        menu.setVegetable(vegetables.get(random.nextInt(vegetables.size())));
+        menu.setProtein(proteins.get(random.nextInt(proteins.size())));
+        menu.setCarb(carbs.get(random.nextInt(carbs.size())));
+        menu.setDessert(desserts.get(random.nextInt(desserts.size())));
+        
+        return menu;
+    }
+
+    private void checkWeek(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        String weekStartStr = request.getParameter("weekStart");
+        LocalDate weekStart = LocalDate.parse(weekStartStr);
+        
+        List<LocalDate> existingDays = menuService.getExistingDaysInWeek(weekStart);
+        if (!existingDays.isEmpty()) {
+            StringBuilder message = new StringBuilder("Cannot generate menu. The following dates already have menus: ");
+            for (int i = 0; i < existingDays.size(); i++) {
+                if (i > 0) {
+                    message.append(", ");
+                }
+                message.append(existingDays.get(i).format(DateTimeFormatter.ofPattern("MMM dd, yyyy")));
+            }
+            
+            request.getSession().setAttribute("NOTIFICATION_MESSAGE", message.toString());
+            request.getSession().setAttribute("NOTIFICATION_TYPE", "warning");
+            response.sendRedirect("menu?command=VIEW");
+        } else {
+            response.sendRedirect("menu?command=CHECK_WEEK&weekStart=" + weekStartStr);
+        }
+    }
+}package canteen.demo.controller;
+
+import java.io.IOException;
+import java.math.BigDecimal;
+import javax.annotation.Resource;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import javax.sql.DataSource;
+import java.util.List;
+
+import canteen.demo.service.PaymentService;
+import canteen.demo.entity.*;
+import canteen.demo.database.PaymentDatabase;
+
+public class PaymentController extends HttpServlet {
+    @Resource(name="jdbc/canteen")
+    private DataSource dataSource;
+    private PaymentService paymentService;
+    
+    @Override
+    public void init() throws ServletException {
+        paymentService = new PaymentService(new PaymentDatabase(dataSource));
+    }
+    
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        String command = request.getParameter("command");
+        if (command == null) command = "VIEW";
+        
+        try {
+            switch (command) {
+                case "VIEW":
+                    viewUnpaidTickets(request, response);
+                    break;
+                case "VIEW-PAID-TICKET":
+                	viewPaidTickets(request, response);
+                    break;
+                default:
+                    viewUnpaidTickets(request, response);
+            }
+        } catch (Exception e) {
+            throw new ServletException(e);
+        }
+    }
+    
+    private void viewPaidTickets(HttpServletRequest request, HttpServletResponse response) throws Exception {
+    	HttpSession session = request.getSession();
+        Student student = (Student) session.getAttribute("student");
+        
+        if (student == null) {
+            response.sendRedirect(request.getContextPath() + "/login");
+            return;
+        }
+        
+        List<MealTicket> paidTickets = paymentService.getPaidTickets(student.getStudentId());
+        request.setAttribute("paidTickets", paidTickets);
+        request.getRequestDispatcher("/paidticket.jsp").forward(request, response);
+		
+	}
+
+	protected void doPost(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        String command = request.getParameter("command");
+        
+        try {
+            if ("PROCESS".equals(command)) {
+                processPayment(request, response);
+            }
+        } catch (Exception e) {
+            handleError(request, response, e.getMessage());
+        }
+    }
+    
+    private void viewUnpaidTickets(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        HttpSession session = request.getSession();
+        Student student = (Student) session.getAttribute("student");
+        
+        if (student == null) {
+            response.sendRedirect(request.getContextPath() + "/login");
+            return;
+        }
+        
+        List<MealTicket> unpaidTickets = paymentService.getUnpaidTickets(student.getStudentId());
+        request.setAttribute("unpaidTickets", unpaidTickets);
+        request.getRequestDispatcher("/payment.jsp").forward(request, response);
+    }
+    
+    private void processPayment(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        HttpSession session = request.getSession();
+        Student student = (Student) session.getAttribute("student");
+        
+        if (student == null) {
+            setPaymentMessage(session, "You must be logged in to make payments", "danger");
+            response.sendRedirect(request.getContextPath() + "/login");
+            return;
+        }
+        
+        String[] ticketIds = request.getParameterValues("ticketIds");
+        if (ticketIds == null || ticketIds.length == 0) {
+            setPaymentMessage(session, "No tickets selected for payment", "warning");
+            response.sendRedirect(request.getContextPath() + "/payment?command=VIEW");
+            return;
+        }
+        
+        try {
+            int[] selectedTickets = new int[ticketIds.length];
+            for (int i = 0; i < ticketIds.length; i++) {
+                selectedTickets[i] = Integer.parseInt(ticketIds[i]);
+            }
+            
+            PaymentTransaction transaction = paymentService.processPayment(student.getStudentId(), selectedTickets);
+            
+            if ("COMPLETED".equals(transaction.getStatus())) {
+                BigDecimal amount = transaction.getTotalAmount();
+                setPaymentMessage(session, 
+                    String.format("Payment of $%.2f processed successfully!", amount), 
+                    "success");
+            } else {
+                setPaymentMessage(session, "Payment processing failed", "danger");
+            }
+            
+        } catch (Exception e) {
+            setPaymentMessage(session, "Error: " + e.getMessage(), "danger");
+        }
+        
+        response.sendRedirect(request.getContextPath() + "/payment?command=VIEW");
+    }
+    
+    private void setPaymentMessage(HttpSession session, String message, String status) {
+        session.setAttribute("PAYMENT_MESSAGE", message);
+        session.setAttribute("PAYMENT_STATUS", status);
+    }
+    
+    private void handleError(HttpServletRequest request, HttpServletResponse response, String error) 
+            throws ServletException, IOException {
+        HttpSession session = request.getSession();
+        session.setAttribute("NOTIFICATION_MESSAGE", error);
+        session.setAttribute("NOTIFICATION_TYPE", "danger");
+        response.sendRedirect(request.getContextPath() + "/payment?command=VIEW");
+    }
+}
+package canteen.demo.controller;
+
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import javax.annotation.Resource;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.sql.DataSource;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+
+
+import canteen.demo.service.PriceService;
+import canteen.demo.entity.ConfigPrice;
+
+public class PriceController extends HttpServlet {
+    @Resource(name="jdbc/canteen")
+    private DataSource dataSource;
+    private PriceService priceService;
+    
+    @Override
+    public void init() throws ServletException {
+        priceService = new PriceService(dataSource);
+    }
+    
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        try {
+            String command = request.getParameter("command");
+            if (command == null) command = "VIEW";
+            
+            List<ConfigPrice> currentPrices = priceService.getCurrentPrices();
+            request.setAttribute("currentPrices", currentPrices);
+
+            Map<String, List<ConfigPrice>> priceHistory = new HashMap<>();
+            priceHistory.put("LUNCH", priceService.getPriceHistory("LUNCH"));
+            priceHistory.put("SNACK", priceService.getPriceHistory("SNACK"));
+            request.setAttribute("priceHistory", priceHistory);
+            
+            request.getRequestDispatcher("/admin/price-config.jsp").forward(request, response);
+        } catch (Exception e) {
+            throw new ServletException(e);
+        }
+    }
+    
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        try {
+            String command = request.getParameter("command");
+            
+            if ("UPDATE".equals(command)) {
+                String mealType = request.getParameter("mealType");
+                BigDecimal price = new BigDecimal(request.getParameter("price"));
+                Timestamp effectiveDateTime = new Timestamp(System.currentTimeMillis());
+                
+                ConfigPrice config = new ConfigPrice(mealType, price, effectiveDateTime);
+                priceService.updatePrice(config);
+                
+                request.getSession().setAttribute("PRICE_MESSAGE", "Price updated successfully!");
+                request.getSession().setAttribute("PRICE_STATUS", "success");
+            }
+            
+            response.sendRedirect(request.getContextPath() + "/prices?command=VIEW");
+        } catch (Exception e) {
+            request.getSession().setAttribute("PRICE_MESSAGE", "Error: " + e.getMessage());
+            request.getSession().setAttribute("PRICE_STATUS", "danger");
+            response.sendRedirect(request.getContextPath() + "/prices?command=VIEW");
+        }
+    }
+}
+package canteen.demo.controller;
+
+import java.io.IOException;
+import java.sql.SQLException;
+import java.util.List;
+
+import javax.annotation.Resource;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.sql.DataSource;
+
+import canteen.demo.database.PaymentDatabase;
+import canteen.demo.database.StudentDatabase;
+import canteen.demo.entity.Student;
+import canteen.demo.entity.StudentTicket;
+import canteen.demo.service.PaymentService;
+
+public class StudentController extends HttpServlet {
+	
+	private StudentDatabase studentDatabase;
+	private PaymentService paymentService;
+ 
+    
+	
+	@Resource(name="jdbc/canteen")
+	private DataSource dataSource;
+	
+	@Override
+	public void init() throws ServletException {
+		super.init();
+		try {
+			studentDatabase = new StudentDatabase(dataSource);
+
+	        paymentService = new PaymentService(new PaymentDatabase(dataSource));
+		} catch (Exception e) {
+			throw new ServletException(e);
+		}
+	}
+	
+	private static final long serialVersionUID = 1L;
+       
+    public StudentController() {
+        super();
+    }
+
+	protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+		try {
+			String command = request.getParameter("command");
+			if (command == null) {
+				command = "LIST";
+			}
+			
+			switch (command) {
+				case "VIEW":
+					viewStudent(request, response);
+					break;
+				case "DELETE":
+					deleteStudent(request, response);
+					break;
+				case "VIEW-STUDENT-TICKETS":
+					viewStudentTickets(request, response);
+					break;
+				case "LIST":
+				default:
+					listStudents(request, response);
+					break;
+			}
+		} catch (Exception e) {
+			throw new ServletException(e);
+		}
+	}
+
+	private void viewStudentTickets(HttpServletRequest request, HttpServletResponse response) throws SQLException, ServletException, IOException {
+        List<StudentTicket> paidTickets = paymentService.getStudentTickets();
+        request.setAttribute("studentTickets", paidTickets);
+        request.getRequestDispatcher("/studentTickets.jsp").forward(request, response);
+		
+		
+	}
+
+	protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+		try {
+			String command = request.getParameter("command");
+			
+			switch (command) {
+				case "ADD":
+					addStudent(request, response);
+					break;
+				case "UPDATE":
+					updateStudent(request, response);
+					break;
+				default:
+					listStudents(request, response);
+					break;
+			}
+		} catch (Exception e) {
+			throw new ServletException(e);
+		}
+	}
+
+	private void listStudents(HttpServletRequest request, HttpServletResponse response) throws Exception {
+		List<Student> students = studentDatabase.getStudents();
+		request.setAttribute("student_list", students);
+		request.getRequestDispatcher("/view_students.jsp").forward(request, response);
+	}
+
+	private void viewStudent(HttpServletRequest request, HttpServletResponse response) throws Exception {
+		String studentId = request.getParameter("studentId");
+		Student student = studentDatabase.getStudentById(Integer.parseInt(studentId));
+		request.setAttribute("student", student);
+		request.getRequestDispatcher("/admin/student-details.jsp").forward(request, response);
+	}
+
+	private void updateStudent(HttpServletRequest request, HttpServletResponse response) throws Exception {
+//convert String to integer
+		int studentId = Integer.parseInt(request.getParameter("studentId"));
+		String firstName = request.getParameter("firstName");
+		String lastName = request.getParameter("lastName");
+		String email = request.getParameter("email");
+		String password = request.getParameter("password");
+		String studentClass = request.getParameter("studentClass");
+
+		Student student = new Student(studentId, email, password, firstName, lastName, studentClass);
+		
+		if (password == null || password.trim().isEmpty()) {
+			Student existingStudent = studentDatabase.getStudentById(studentId);
+			student.setPassword(existingStudent.getPassword());
+		}
+
+		studentDatabase.updateStudent(student);
+		response.sendRedirect(request.getContextPath() + "/students?command=LIST");
+	}
+
+	private void deleteStudent(HttpServletRequest request, HttpServletResponse response) throws Exception {
+		int studentId = Integer.parseInt(request.getParameter("studentId"));
+		studentDatabase.deleteStudent(studentId);
+		response.sendRedirect(request.getContextPath() + "/students?command=LIST");
+	}
+
+	private void addStudent(HttpServletRequest request, HttpServletResponse response) throws Exception {
+		String firstName = request.getParameter("firstName");
+		String lastName = request.getParameter("lastName");
+		String email = request.getParameter("email");
+		String password = request.getParameter("password");
+		String studentClass = request.getParameter("studentClass");
+		
+		Student student = new Student(email, password, firstName, lastName, studentClass);
+		studentDatabase.addStudent(student);
+		response.sendRedirect(request.getContextPath() + "/students?command=LIST");
+	}
+}
+package canteen.demo.controller;
+
+import java.io.IOException;
+import java.sql.Date;  
+import javax.annotation.Resource;
+import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import javax.sql.DataSource;
+
+import canteen.demo.database.TicketDatabase;
+import canteen.demo.service.TicketService;
+import canteen.demo.entity.Student;
+
+public class TicketController extends HttpServlet {
+    @Resource(name="jdbc/canteen")
+    private DataSource dataSource;
+    private TicketService ticketService;
+    
+    @Override
+    public void init() throws ServletException {
+        ticketService = new TicketService(new TicketDatabase(dataSource));
+    }
+    
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) 
+            throws ServletException, IOException {
+        try {
+            String command = request.getParameter("command");
+            
+            if ("GENERATE".equals(command)) {
+                generateTicket(request, response);
+            }
+        } catch (Exception e) {
+            handleError(request, response, e.getMessage());
+        }
+    }
+    
+    private void generateTicket(HttpServletRequest request, HttpServletResponse response) 
+            throws Exception {
+        HttpSession session = request.getSession();
+        Student student = (Student) session.getAttribute("student");
+        
+        if (student == null) {
+            throw new Exception("You must be logged in to generate tickets");
+        }
+        
+        int studentId = student.getStudentId();
+        int menuId = Integer.parseInt(request.getParameter("menuId"));
+        String ticketType = request.getParameter("ticketType");
+        Date ticketDate = Date.valueOf(request.getParameter("menuDate"));
+        
+        ticketService.generateTicket(studentId, menuId, ticketType, ticketDate);
+        
+        session.setAttribute("NOTIFICATION_MESSAGE", "Ticket generated successfully!");
+        session.setAttribute("NOTIFICATION_TYPE", "success");
+        
+        response.sendRedirect(request.getContextPath() + "/menu?command=VIEW");
+    }
+    
+    private void handleError(HttpServletRequest request, HttpServletResponse response, String error) 
+            throws ServletException, IOException {
+        HttpSession session = request.getSession();
+        session.setAttribute("NOTIFICATION_MESSAGE", error);
+        session.setAttribute("NOTIFICATION_TYPE", "danger");
+        response.sendRedirect(request.getContextPath() + "/menu?command=VIEW");
+    }
+}
+package canteen.demo.database;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import javax.sql.DataSource;
+import canteen.demo.entity.Admin;
+
+public class AdminDatabase {
+    private DataSource dataSource;
+
+    public AdminDatabase(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    public Admin findAdminByEmail(String email) throws Exception {
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        ResultSet rs = null;
+        
+        try {
+            conn = dataSource.getConnection();
+            String sql = "SELECT * FROM canteen_admin WHERE admin_email = ?";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, email);
+            
+            rs = stmt.executeQuery();
+            
+            if (rs.next()) {
+                return new Admin(
+                    rs.getInt("admin_id"),
+                    rs.getString("admin_email"),
+                    rs.getString("admin_password")
+                );
+            }
+            return null;
+        } finally {
+            if (rs != null) rs.close();
+            if (stmt != null) stmt.close();
+            if (conn != null) conn.close();
+        }
+    }
+}
+package canteen.demo.database;
+
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
+import javax.sql.DataSource;
+import canteen.demo.entity.*;
+import java.time.LocalDate;
+
+public class MenuDatabase {
+    private DataSource dataSource;
+    
+    public MenuDatabase(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+    
+    public List<DailyMenu> getWeeklyMenu(Date startDate, Date endDate) throws SQLException {
+        List<DailyMenu> menuList = new ArrayList<>();
+        String sql = "SELECT dm.daily_menu_id, dm.menu_date, " +
+                    "s.snack_id, s.snack_name, " +
+                    "a.appetizer_id, a.appetizer_name, " +
+                    "v.vegetables_id, v.vegetables_name, " +
+                    "p.proteins_id, p.proteins_name, p.proteins_type, " +
+                    "c.carb_id, c.carb_name, " +
+                    "d.dessert_id, d.dessert_name " +
+                    "FROM daily_menu dm " +
+                    "LEFT JOIN snacks s ON dm.snack_id = s.snack_id " +
+                    "LEFT JOIN appetizer a ON dm.appetizer_id = a.appetizer_id " +
+                    "LEFT JOIN vegetables v ON dm.vegetable_id = v.vegetables_id " +
+                    "LEFT JOIN proteins p ON dm.protein_id = p.proteins_id " +
+                    "LEFT JOIN carbohydrates c ON dm.carb_id = c.carb_id " +
+                    "LEFT JOIN dessert d ON dm.dessert_id = d.dessert_id " +
+                    "WHERE dm.menu_date BETWEEN ? AND ? " +
+                    "ORDER BY dm.menu_date";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setDate(1, startDate);
+            stmt.setDate(2, endDate);
+            
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    DailyMenu menu = new DailyMenu();
+                    menu.setDailyMenuId(rs.getInt("daily_menu_id"));
+                    menu.setMenuDate(rs.getDate("menu_date"));
+                    menu.setSnack(new Snack(rs.getInt("snack_id"), rs.getString("snack_name")));
+                    menu.setAppetizer(new Appetizer(rs.getInt("appetizer_id"), rs.getString("appetizer_name")));
+                    menu.setVegetable(new Vegetable(rs.getInt("vegetables_id"), rs.getString("vegetables_name")));
+                    menu.setProtein(new Protein(rs.getInt("proteins_id"), rs.getString("proteins_name"), rs.getString("proteins_type")));
+                    menu.setCarb(new Carbohydrate(rs.getInt("carb_id"), rs.getString("carb_name")));
+                    menu.setDessert(new Dessert(rs.getInt("dessert_id"), rs.getString("dessert_name")));
+                    
+                    menuList.add(menu);
+                }
+            }
+        }
+        return menuList;
+    }
+
+    public List<DailyMenu> getWeeklyMenu() throws SQLException {
+        throw new UnsupportedOperationException("Use getWeeklyMenu(Date, Date) instead");
+    }
+    
+    public void createMenu(DailyMenu menu) throws SQLException {
+        String sql = "INSERT INTO daily_menu (menu_date, snack_id, appetizer_id, vegetable_id, protein_id, carb_id, dessert_id) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setDate(1, menu.getMenuDate());
+            stmt.setInt(2, menu.getSnack().getId());
+            stmt.setInt(3, menu.getAppetizer().getId());
+            stmt.setInt(4, menu.getVegetable().getId());
+            stmt.setInt(5, menu.getProtein().getId());
+            stmt.setInt(6, menu.getCarb().getId());
+            stmt.setInt(7, menu.getDessert().getId());
+            
+            stmt.executeUpdate();
+        }
+    }
+
+    public List<Snack> getAllSnacks() throws SQLException {
+        List<Snack> snacks = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT snack_id, snack_name FROM snacks");
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+                snacks.add(new Snack(
+                    rs.getInt("snack_id"),
+                    rs.getString("snack_name")
+                ));
+            }
+        }
+        return snacks;
+    }
+
+    public List<Appetizer> getAllAppetizers() throws SQLException {
+        List<Appetizer> appetizers = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT appetizer_id, appetizer_name FROM appetizer");
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+                appetizers.add(new Appetizer(
+                    rs.getInt("appetizer_id"),
+                    rs.getString("appetizer_name")
+                ));
+            }
+        }
+        return appetizers;
+    }
+
+    public List<Vegetable> getAllVegetables() throws SQLException {
+        List<Vegetable> vegetables = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT vegetables_id, vegetables_name FROM vegetables");
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+                vegetables.add(new Vegetable(
+                    rs.getInt("vegetables_id"),
+                    rs.getString("vegetables_name")
+                ));
+            }
+        }
+        return vegetables;
+    }
+
+    public List<Protein> getAllProteins() throws SQLException {
+        List<Protein> proteins = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT proteins_id, proteins_name, proteins_type FROM proteins");
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+                proteins.add(new Protein(
+                    rs.getInt("proteins_id"),
+                    rs.getString("proteins_name"),
+                    rs.getString("proteins_type")
+                ));
+            }
+        }
+        return proteins;
+    }
+
+    public List<Carbohydrate> getAllCarbohydrates() throws SQLException {
+        List<Carbohydrate> carbs = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT carb_id, carb_name FROM carbohydrates");
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+                carbs.add(new Carbohydrate(
+                    rs.getInt("carb_id"),
+                    rs.getString("carb_name")
+                ));
+            }
+        }
+        return carbs;
+    }
+
+    public List<Dessert> getAllDesserts() throws SQLException {
+        List<Dessert> desserts = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT dessert_id, dessert_name FROM dessert");
+             ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+                desserts.add(new Dessert(
+                    rs.getInt("dessert_id"),
+                    rs.getString("dessert_name")
+                ));
+            }
+        }
+        return desserts;
+    }
+
+    public DailyMenu getMenuById(int menuId) throws SQLException {
+        DailyMenu menu = null;
+        String sql = "SELECT dm.daily_menu_id, dm.menu_date, " +
+                    "s.snack_id, s.snack_name, " +
+                    "a.appetizer_id, a.appetizer_name, " +
+                    "v.vegetables_id, v.vegetables_name, " +
+                    "p.proteins_id, p.proteins_name, p.proteins_type, " +
+                    "c.carb_id, c.carb_name, " +
+                    "d.dessert_id, d.dessert_name " +
+                    "FROM daily_menu dm " +
+                    "JOIN snacks s ON dm.snack_id = s.snack_id " +
+                    "JOIN appetizer a ON dm.appetizer_id = a.appetizer_id " +
+                    "JOIN vegetables v ON dm.vegetable_id = v.vegetables_id " +
+                    "JOIN proteins p ON dm.protein_id = p.proteins_id " +
+                    "JOIN carbohydrates c ON dm.carb_id = c.carb_id " +
+                    "JOIN dessert d ON dm.dessert_id = d.dessert_id " +
+                    "WHERE dm.daily_menu_id = ?";
+                    
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, menuId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    menu = new DailyMenu();
+                    menu.setDailyMenuId(rs.getInt("daily_menu_id"));
+                    menu.setMenuDate(rs.getDate("menu_date"));
+                    menu.setSnack(new Snack(rs.getInt("snack_id"), rs.getString("snack_name")));
+                    menu.setAppetizer(new Appetizer(rs.getInt("appetizer_id"), rs.getString("appetizer_name")));
+                    menu.setVegetable(new Vegetable(rs.getInt("vegetables_id"), rs.getString("vegetables_name")));
+                    menu.setProtein(new Protein(rs.getInt("proteins_id"), rs.getString("proteins_name"), rs.getString("proteins_type")));
+                    menu.setCarb(new Carbohydrate(rs.getInt("carb_id"), rs.getString("carb_name")));
+                    menu.setDessert(new Dessert(rs.getInt("dessert_id"), rs.getString("dessert_name")));
+                }
+            }
+        }
+        return menu;
+    }
+
+    public void updateMenu(DailyMenu menu) throws SQLException {
+        String sql = "UPDATE daily_menu SET menu_date=?, snack_id=?, appetizer_id=?, " +
+                    "vegetable_id=?, protein_id=?, carb_id=?, dessert_id=? WHERE daily_menu_id=?";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setDate(1, menu.getMenuDate());
+            stmt.setInt(2, menu.getSnack().getId());
+            stmt.setInt(3, menu.getAppetizer().getId());
+            stmt.setInt(4, menu.getVegetable().getId());
+            stmt.setInt(5, menu.getProtein().getId());
+            stmt.setInt(6, menu.getCarb().getId());
+            stmt.setInt(7, menu.getDessert().getId());
+            stmt.setInt(8, menu.getDailyMenuId());
+            
+            stmt.executeUpdate();
+        }
+    }
+
+    public boolean menuExistsForDate(LocalDate date) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM daily_menu WHERE menu_date = ?";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setDate(1, Date.valueOf(date));
+            
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1) > 0;
+                }
+            }
+        }
+        return false;
+    }
+}
+package canteen.demo.database;
+
+import javax.sql.DataSource;
+import java.sql.*;
+import java.util.List;
+import java.util.ArrayList;
+import java.math.BigDecimal;
+import canteen.demo.entity.*;
+
+public class PaymentDatabase {
+    private DataSource dataSource;
+    
+    public PaymentDatabase(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+    
+    public List<MealTicket> getUnpaidTickets(int studentId) throws SQLException {
+        String sql = "SELECT t.*, cp.price " +
+                    "FROM meal_tickets t " +
+                    "LEFT JOIN config_prices cp ON t.ticket_type = cp.meal_type " +
+                    "WHERE t.student_id = ? AND t.paid = false " +
+                    "AND cp.effective_datetime = (SELECT MAX(effective_datetime) " +
+                                          "FROM config_prices cp2 " +
+                                          "WHERE cp2.meal_type = t.ticket_type " +
+                                          "AND cp2.effective_datetime <= CURRENT_TIMESTAMP)";
+        
+        List<MealTicket> tickets = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, studentId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    MealTicket ticket = new MealTicket();
+                    ticket.setId(rs.getInt("ticket_id"));
+                    ticket.setStudentId(rs.getInt("student_id"));
+                    ticket.setDailyMenuId(rs.getInt("daily_menu_id"));
+                    ticket.setTicketType(rs.getString("ticket_type"));
+                    ticket.setTicketDate(rs.getDate("ticket_date"));
+                    ticket.setPaid(rs.getBoolean("paid"));
+                    ticket.setPrice(rs.getBigDecimal("price"));
+                    tickets.add(ticket);
+                }
+            }
+        }
+        return tickets;
+    }
+    
+    public BigDecimal getCurrentPrice(String mealType) throws SQLException {
+        String sql = "SELECT price FROM config_prices WHERE meal_type = ? " +
+                    "AND effective_datetime <= CURRENT_TIMESTAMP " +
+                    "ORDER BY effective_datetime DESC LIMIT 1";
+                    
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setString(1, mealType);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getBigDecimal("price");
+                }
+            }
+        }
+        throw new SQLException("No price configuration found for " + mealType);
+    }
+    
+    public int createPaymentTransaction(PaymentTransaction transaction) throws SQLException {
+        Connection conn = null;
+        try {
+            conn = dataSource.getConnection();
+            conn.setAutoCommit(false);
+            
+            String sql = "INSERT INTO payment_transactions (student_id, total_amount, status) VALUES (?, ?, ?)";
+            int transactionId;
+            
+            try (PreparedStatement stmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+                stmt.setInt(1, transaction.getStudentId());
+                stmt.setBigDecimal(2, transaction.getTotalAmount());
+                stmt.setString(3, transaction.getStatus());
+                stmt.executeUpdate();
+                
+                try (ResultSet rs = stmt.getGeneratedKeys()) {
+                    if (!rs.next()) {
+                        throw new SQLException("Failed to create payment transaction");
+                    }
+                    transactionId = rs.getInt(1);
+                }
+            }
+            
+            sql = "INSERT INTO payment_details (payment_transaction_id, ticket_id, amount) VALUES (?, ?, ?)";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                for (PaymentDetail detail : transaction.getDetails()) {
+                    stmt.setInt(1, transactionId);
+                    stmt.setInt(2, detail.getTicketId());
+                    stmt.setBigDecimal(3, detail.getAmount());
+                    stmt.executeUpdate();
+                    
+                    markTicketAsPaid(conn, detail.getTicketId());
+                }
+            }
+            
+            conn.commit();
+            return transactionId;
+            
+        } catch (SQLException e) {
+            if (conn != null) {
+                try {
+                    conn.rollback();
+                } catch (SQLException ex) {
+                    throw new SQLException("Error rolling back transaction", ex);
+                }
+            }
+            throw e;
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.setAutoCommit(true);
+                    conn.close();
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private void markTicketAsPaid(Connection conn, int ticketId) throws SQLException {
+        String sql = "UPDATE meal_tickets SET paid = true WHERE ticket_id = ?";
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, ticketId);
+            int rowsAffected = stmt.executeUpdate();
+            if (rowsAffected == 0) {
+                throw new SQLException("Failed to mark ticket as paid: Ticket not found");
+            }
+        }
+    }
+
+    public MealTicket getTicketById(int ticketId) throws SQLException {
+        String sql = "SELECT * FROM meal_tickets WHERE ticket_id = ?";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, ticketId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    MealTicket ticket = new MealTicket();
+                    ticket.setId(rs.getInt("ticket_id"));
+                    ticket.setStudentId(rs.getInt("student_id"));
+                    ticket.setDailyMenuId(rs.getInt("daily_menu_id"));
+                    ticket.setTicketType(rs.getString("ticket_type"));
+                    ticket.setTicketDate(rs.getDate("ticket_date"));
+                    ticket.setPaid(rs.getBoolean("paid"));
+                    return ticket;
+                }
+            }
+        }
+        return null;
+    }
+
+    public void markTicketAsPaid(int ticketId) throws SQLException {
+        String sql = "UPDATE meal_tickets SET paid = true WHERE ticket_id = ?";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, ticketId);
+            int rowsAffected = stmt.executeUpdate();
+            
+            if (rowsAffected == 0) {
+                throw new SQLException("Failed to mark ticket as paid: Ticket not found");
+            }
+        }
+    }
+
+	public List<MealTicket> getPaidTickets(int studentId) throws SQLException {
+		String sql = "SELECT t.*, cp.price " + "FROM meal_tickets t "
+				+ "LEFT JOIN config_prices cp ON t.ticket_type = cp.meal_type "
+				+ "WHERE t.student_id = ? AND t.paid = true "
+				+ "AND cp.effective_datetime = (SELECT MAX(effective_datetime) " + "FROM config_prices cp2 "
+				+ "WHERE cp2.meal_type = t.ticket_type " + "AND cp2.effective_datetime <= CURRENT_TIMESTAMP)";
+
+		List<MealTicket> tickets = new ArrayList<>();
+		try (Connection conn = dataSource.getConnection(); PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+			stmt.setInt(1, studentId);
+			try (ResultSet rs = stmt.executeQuery()) {
+				while (rs.next()) {
+					MealTicket ticket = new MealTicket();
+					ticket.setId(rs.getInt("ticket_id"));
+					ticket.setStudentId(rs.getInt("student_id"));
+					ticket.setDailyMenuId(rs.getInt("daily_menu_id"));
+					ticket.setTicketType(rs.getString("ticket_type"));
+					ticket.setTicketDate(rs.getDate("ticket_date"));
+					ticket.setPaid(rs.getBoolean("paid"));
+					ticket.setPrice(rs.getBigDecimal("price"));
+					tickets.add(ticket);
+				}
+			}
+		}
+		return tickets;
+	}
+
+	public List<StudentTicket> getStudentTickets() throws SQLException {
+		String sql = "SELECT t.*, concat(s.student_firstname, \" \", s.student_lastname) as student_name, cp.price FROM meal_tickets t "
+				+ " LEFT JOIN config_prices cp ON t.ticket_type = cp.meal_type  "
+				+ " LEFT JOIN students s ON s.student_id = t.student_id "
+				+ " WHERE cp.effective_datetime = (SELECT MAX(effective_datetime) " + "FROM config_prices cp2 "
+				+ " WHERE cp2.meal_type = t.ticket_type " + "AND cp2.effective_datetime <= CURRENT_TIMESTAMP)";
+
+		List<StudentTicket> tickets = new ArrayList<>();
+		try (Connection conn = dataSource.getConnection(); PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+			try (ResultSet rs = stmt.executeQuery()) {
+				while (rs.next()) {
+					StudentTicket ticket = new StudentTicket();
+					ticket.setId(rs.getInt("ticket_id"));
+					ticket.setStudentId(rs.getInt("student_id"));
+					ticket.setStudentName(rs.getString("student_name"));
+					ticket.setDailyMenuId(rs.getInt("daily_menu_id"));
+					ticket.setTicketType(rs.getString("ticket_type"));
+					ticket.setTicketDate(rs.getDate("ticket_date"));
+					ticket.setPaid(rs.getBoolean("paid"));
+					ticket.setPrice(rs.getBigDecimal("price"));
+					tickets.add(ticket);
+				}
+			}
+		}
+		return tickets;
+	}
+}
+package canteen.demo.database;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Properties;
+
+import javax.annotation.Resource;
+import javax.sql.DataSource;
+
+import canteen.demo.entity.Student;
+
+public class StudentDatabase {
+	private DataSource dataSource;
+
+	public StudentDatabase(DataSource dataSource) {
+		this.dataSource = dataSource;
+	}   
+	
+	public List<Student> getStudents() throws Exception {
+		List<Student> students = new ArrayList<Student>(); 
+		Connection con= null;
+		Statement stmt = null;
+		ResultSet rs = null;
+		
+		try {
+			con = dataSource.getConnection();
+			System.out.println("===========Connection created===========");
+			stmt = con.createStatement();
+			rs = stmt.executeQuery("select * from students");
+			while(rs.next()) {
+				int id = rs.getInt("student_id");
+				String email = rs.getString("student_email");
+				String password = rs.getString("student_password");
+				String firstName = rs.getString("student_firstname");
+				String lastName = rs.getString("student_lastname");
+				String studentClass = rs.getString("class");
+				
+				
+				Student student = new Student(id, email, password, firstName, lastName, studentClass);
+				students.add(student);
+			}
+			con.close();
+			return students;
+		} 
+		finally {
+		}
+		
+	}
+	
+	public List<Student> searchStudentsByFirstName(String firstNameParam) throws Exception {
+		List<Student> students = new ArrayList<Student>(); 
+		Connection con= null;
+		Statement stmt = null;
+		ResultSet rs = null;
+		
+		try {
+			con = dataSource.getConnection();
+			System.out.println("===========Connection created===========");
+			stmt = con.createStatement();
+			rs = stmt.executeQuery("select * from students where first_name like %"+firstNameParam+"%");
+			while(rs.next()) {
+				int id = rs.getInt("student_id");
+				String email = rs.getString("student_email");
+				String password = rs.getString("student_password");
+				String firstName = rs.getString("student_firstname");
+				String lastName = rs.getString("student_lastname");
+				String studentClass = rs.getString("class");
+				
+				
+				Student student = new Student(id, email, password, firstName, lastName, studentClass);
+				students.add(student);
+			}
+			con.close();
+			return students;
+		} 
+		finally {
+		}
+		
+	}
+	
+	public void addStudent(Student student) throws Exception {
+		List<Student> listStudents = getStudents();
+		if (!listStudents.contains(student)) {
+			
+			Connection con= null;
+			PreparedStatement stmt = null;
+				
+			try {
+				con = dataSource.getConnection();
+				System.out.println("===========Connection created===========");
+				
+				String sql = "INSERT INTO canteen.students(student_email, student_password, student_firstname, student_lastname, class) "
+						+ "VALUES (?,?,?,?,?)";
+				stmt = con.prepareStatement(sql);
+				stmt.setString(1, student.getEmail());
+				stmt.setString(2, student.getPassword());
+				stmt.setString(3, student.getFirstName());
+				stmt.setString(4, student.getLastName());
+				stmt.setString(5, student.getStudentClass());
+	
+				stmt.execute();
+				System.out.println("Insert Student Successfully");
+				con.close();
+			} finally {
+				con.close();
+			}
+		}
+		
+	}
+
+	public Student getStudentById(int studentId) throws SQLException {
+		List<Student> students = new ArrayList<Student>(); 
+		Connection con= null;
+		PreparedStatement stmt = null;
+		ResultSet rs = null;
+		Student student = null;
+		try {
+			con = dataSource.getConnection();
+			System.out.println("===========Connection created===========");
+			String sql = "select * from students WHERE student_id = ?";
+			stmt = con.prepareStatement(sql);
+			stmt.setInt(1, studentId);
+			
+			rs = stmt.executeQuery();
+			if(rs.next()) {
+				int id = rs.getInt("student_id");
+				String email = rs.getString("student_email");
+				String password = rs.getString("student_password");
+				String firstName = rs.getString("student_firstname");
+				String lastName = rs.getString("student_lastname");
+				String studentClass = rs.getString("class");
+				
+				student = new Student(id, email, password, firstName, lastName, studentClass);
+			}
+			return student;
+			
+		} 
+		finally {
+			con.close();
+		}
+	}
+	public void updateStudent(Student student) throws SQLException {
+	    String sql = "UPDATE students SET student_email=?, student_password=?, " +
+                    "student_firstname=?, student_lastname=?, class=? " +
+                    "WHERE student_id=?";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setString(1, student.getEmail());
+            stmt.setString(2, student.getPassword());
+            stmt.setString(3, student.getFirstName());
+            stmt.setString(4, student.getLastName());
+            stmt.setString(5, student.getStudentClass());
+            stmt.setInt(6, student.getStudentId());
+            
+            stmt.execute();
+        }
+	}
+	public boolean deleteStudent(int studentId) throws SQLException {
+        String sql = "DELETE FROM students WHERE student_id=?";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, studentId);
+            return stmt.executeUpdate() > 0;
+        }
+    }
+}
+
+package canteen.demo.database;
+
+import java.sql.*;
+import javax.sql.DataSource;
+import canteen.demo.entity.MealTicket;
+
+public class TicketDatabase {
+    private DataSource dataSource;
+    
+    public TicketDatabase(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+    
+    public void createTicket(MealTicket ticket) throws SQLException {
+        String sql = "INSERT INTO meal_tickets (student_id, daily_menu_id, ticket_type, ticket_date) VALUES (?, ?, ?, ?)";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, ticket.getStudentId());
+            stmt.setInt(2, ticket.getDailyMenuId());
+            stmt.setString(3, ticket.getTicketType());
+            stmt.setDate(4, ticket.getTicketDate());
+            stmt.executeUpdate();
+        }
+    }
+    
+    public boolean hasTicketForDay(int studentId, Date ticketDate, String ticketType) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM meal_tickets WHERE student_id = ? AND ticket_date = ? AND ticket_type = ?";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, studentId);
+            stmt.setDate(2, ticketDate);
+            stmt.setString(3, ticketType);
+            
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1) > 0;
+                }
+            }
+        }
+        return false;
+    }
+}
+package canteen.demo.entity;
+
+public class Admin {
+    private int adminId;
+    private String adminEmail;
+    private String adminPassword;
+    
+    public Admin() {}
+    
+    public Admin(String adminEmail, String adminPassword) {
+        this.adminEmail = adminEmail;
+        this.adminPassword = adminPassword;
+    }
+    
+    public Admin(int adminId, String adminEmail, String adminPassword) {
+        this.adminId = adminId;
+        this.adminEmail = adminEmail;
+        this.adminPassword = adminPassword;
+    }
+    
+    public int getAdminId() { return adminId; }
+    public void setAdminId(int adminId) { this.adminId = adminId; }
+    public String getAdminEmail() { return adminEmail; }
+    public void setAdminEmail(String adminEmail) { this.adminEmail = adminEmail; }
+    public String getAdminPassword() { return adminPassword; }
+    public void setAdminPassword(String adminPassword) { this.adminPassword = adminPassword; }
+}
+package canteen.demo.entity;
+
+public class Appetizer extends MenuItem {
+    public Appetizer(int id, String name) { 
+        super(id, name); 
+    }
+
+}
+package canteen.demo.entity;
+
+public class Carbohydrate extends MenuItem {
+    public Carbohydrate(int id, String name) { 
+        super(id, name); 
+    }
+
+ 
+}
+package canteen.demo.entity;
+
+import java.sql.Timestamp;
+import java.math.BigDecimal;
+
+public class ConfigPrice {
+    private int id;
+    private String mealType;
+    private BigDecimal price;
+    private Timestamp effectiveDateTime;
+    
+    public ConfigPrice() {}
+    
+    public ConfigPrice(String mealType, BigDecimal price, Timestamp effectiveDateTime) {
+        this.mealType = mealType;
+        this.price = price;
+        this.effectiveDateTime = effectiveDateTime;
+    }
+    
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+    
+    public String getMealType() { return mealType; }
+    public void setMealType(String mealType) { this.mealType = mealType; }
+    
+    public BigDecimal getPrice() { return price; }
+    public void setPrice(BigDecimal price) { this.price = price; }
+    
+    public Timestamp getEffectiveDateTime() { return effectiveDateTime; }
+    public void setEffectiveDateTime(Timestamp effectiveDateTime) { this.effectiveDateTime = effectiveDateTime; }
+}
+package canteen.demo.entity;
+
+import java.sql.Date;
+
+public class DailyMenu {
+    private int dailyMenuId;
+    private Date menuDate;
+    private Snack snack;
+    private Appetizer appetizer;
+    private Vegetable vegetable;
+    private Protein protein;
+    private Carbohydrate carb;
+    private Dessert dessert;
+    
+    public DailyMenu() {}
+    
+    public DailyMenu(Date menuDate) {
+        this.dailyMenuId = 0;
+        this.menuDate = menuDate;
+        this.snack = null;
+        this.appetizer = null;
+        this.vegetable = null;
+        this.protein = null;
+        this.carb = null;
+        this.dessert = null;
+    }
+    
+    public DailyMenu(Date menuDate, Snack snack, Appetizer appetizer, 
+            Vegetable vegetable, Protein protein, Carbohydrate carb, Dessert dessert) {
+        this.menuDate = menuDate;
+        this.snack = snack;
+        this.appetizer = appetizer;
+        this.vegetable = vegetable;
+        this.protein = protein;
+        this.carb = carb;
+        this.dessert = dessert;
+    }
+    
+    public int getDailyMenuId() { return dailyMenuId; }
+    public void setDailyMenuId(int dailyMenuId) { this.dailyMenuId = dailyMenuId; }
+    
+    public Date getMenuDate() { return menuDate; }
+    public void setMenuDate(Date menuDate) { this.menuDate = menuDate; }
+    
+    public Snack getSnack() { return snack; }
+    public void setSnack(Snack snack) { this.snack = snack; }
+    
+    public Appetizer getAppetizer() { return appetizer; }
+    public void setAppetizer(Appetizer appetizer) { this.appetizer = appetizer; }
+    
+    public Vegetable getVegetable() { return vegetable; }
+    public void setVegetable(Vegetable vegetable) { this.vegetable = vegetable; }
+    
+    public Protein getProtein() { return protein; }
+    public void setProtein(Protein protein) { this.protein = protein; }
+    
+    public Carbohydrate getCarb() { return carb; }
+    public void setCarb(Carbohydrate carb) { this.carb = carb; }
+    
+    public Dessert getDessert() { return dessert; }
+    public void setDessert(Dessert dessert) { this.dessert = dessert; }
+}
+package canteen.demo.entity;
+
+public class Dessert extends MenuItem {
+    public Dessert(int id, String name) { 
+        super(id, name); 
+    }
+
+   
+}
+package canteen.demo.entity;
+
+import java.sql.Date;
+import java.sql.Timestamp;
+import java.math.BigDecimal;
+
+public class MealTicket {
+    private int id;
+    private int studentId;
+    private int dailyMenuId;
+    private String ticketType; // "LUNCH" or "SNACK"
+    private Date ticketDate;
+    private BigDecimal price;
+    private boolean paid;
+
+    public MealTicket() {}
+
+    public MealTicket(int id, int studentId, int dailyMenuId, String ticketType, Date ticketDate, BigDecimal price, boolean paid) {
+        this.id = id;
+        this.studentId = studentId;
+        this.dailyMenuId = dailyMenuId;
+        this.ticketType = ticketType;
+        this.ticketDate = ticketDate;
+        this.price = price;
+        this.paid = paid;
+    }
+
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+    public int getStudentId() { return studentId; }
+    public void setStudentId(int studentId) { this.studentId = studentId; }
+    public int getDailyMenuId() { return dailyMenuId; }
+    public void setDailyMenuId(int dailyMenuId) { this.dailyMenuId = dailyMenuId; }
+    public String getTicketType() { return ticketType; }
+    public void setTicketType(String ticketType) { this.ticketType = ticketType; }
+    public Date getTicketDate() { return ticketDate; }
+    public void setTicketDate(Date ticketDate) { this.ticketDate = ticketDate; }
+    public BigDecimal getPrice() { return price; }
+    public void setPrice(BigDecimal price) { this.price = price; }
+    public boolean isPaid() { return paid; }
+    public void setPaid(boolean paid) { this.paid = paid; }
+}package canteen.demo.entity;
+
+public abstract class MenuItem {
+    protected int id;
+    protected String name;
+    
+    public MenuItem() {}
+    
+    public MenuItem(int id, String name) {
+        this.id = id;
+        this.name = name;
+    }
+    
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+}
+package canteen.demo.entity;
+
+import java.math.BigDecimal;
+
+public class PaymentDetail {
+    private int id;
+    private int paymentTransactionId;
+    private int ticketId;
+    private BigDecimal amount;
+    
+    public PaymentDetail() {}
+    
+    public PaymentDetail(int paymentTransactionId, int ticketId, BigDecimal amount) {
+        this.paymentTransactionId = paymentTransactionId;
+        this.ticketId = ticketId;
+        this.amount = amount;
+    }
+    
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+    
+    public int getPaymentTransactionId() { return paymentTransactionId; }
+    public void setPaymentTransactionId(int paymentTransactionId) { this.paymentTransactionId = paymentTransactionId; }
+    
+    public int getTicketId() { return ticketId; }
+    public void setTicketId(int ticketId) { this.ticketId = ticketId; }
+    
+    public BigDecimal getAmount() { return amount; }
+    public void setAmount(BigDecimal amount) { this.amount = amount; }
+}
+package canteen.demo.entity;
+
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.util.List;
+import java.util.ArrayList;
+
+public class PaymentTransaction {
+    private int id;
+    private int studentId;
+    private Timestamp createdAt;
+    private BigDecimal totalAmount;
+    private String status;
+    private List<PaymentDetail> details;
+    
+    public PaymentTransaction() {
+        this.details = new ArrayList<>();
+    }
+    
+    public int getId() { return id; }
+    public void setId(int id) { this.id = id; }
+    
+    public int getStudentId() { return studentId; }
+    public void setStudentId(int studentId) { this.studentId = studentId; }
+    
+    public Timestamp getCreatedAt() { return createdAt; }
+    public void setCreatedAt(Timestamp createdAt) { this.createdAt = createdAt; }
+    
+    public BigDecimal getTotalAmount() { return totalAmount; }
+    public void setTotalAmount(BigDecimal totalAmount) { this.totalAmount = totalAmount; }
+    
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    
+    public List<PaymentDetail> getDetails() { return details; }
+    public void setDetails(List<PaymentDetail> details) { this.details = details; }
+}
+package canteen.demo.entity;
+
+public class Protein extends MenuItem {
+    private String type;
+    
+    public Protein(int id, String name, String type) { 
+        super(id, name);
+        this.type = type;
+    }
+    
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
+}
+package canteen.demo.entity;
+
+public class Snack extends MenuItem {
+    public Snack(int id, String name) { 
+        super(id, name); 
+    }
+
+}
+package canteen.demo.entity;
+
+
+public class Student {
+	private int studentId;
+	private String email;
+	private String password;
+	private String firstName;
+	private String lastName;
+	private String studentClass;
+	
+	
+	public Student() {
+		
+	}
+	
+	
+	public Student(String email, String password, String firstName, String lastName,
+			String studentClass) {
+		this.email = email;
+		this.password = password;
+		this.firstName = firstName;
+		this.lastName = lastName;
+		this.studentClass = studentClass;
+	}
+	
+	public Student(int studentId, String email, String password, String firstName, String lastName,
+			String studentClass) {
+		this.studentId = studentId;
+		this.email = email;
+		this.password = password;
+		this.firstName = firstName;
+		this.lastName = lastName;
+		this.studentClass = studentClass;
+	}
+	public int getStudentId() {
+		return studentId;
+	}
+	public void setStudentId(int studentId) {
+		this.studentId = studentId;
+	}
+	public String getEmail() {
+		return email;
+	}
+	public void setEmail(String email) {
+		this.email = email;
+	}
+	public String getPassword() {
+		return password;
+	}
+	public void setPassword(String password) {
+		this.password = password;
+	}
+	public String getFirstName() {
+		return firstName;
+	}
+	public void setFirstName(String firstName) {
+		this.firstName = firstName;
+	}
+	public String getLastName() {
+		return lastName;
+	}
+	public void setLastName(String lastName) {
+		this.lastName = lastName;
+	}
+	public String getStudentClass() {
+		return studentClass;
+	}
+	public void setStudentClass(String studentClass) {
+		this.studentClass = studentClass;
+	}
+	
+	
+
+}
+package canteen.demo.entity;
+
+import java.sql.Date;
+import java.sql.Timestamp;
+import java.math.BigDecimal;
+
+public class StudentTicket {
+    private int id;
+    private int studentId;
+    private String studentName;
+    private int dailyMenuId;
+    private String ticketType; // "LUNCH" or "SNACK"
+    private Date ticketDate;
+    private BigDecimal price;
+    private boolean paid;
+    
+    
+	public StudentTicket(int id, int studentId, String studentName, int dailyMenuId, String ticketType, Date ticketDate,
+			BigDecimal price, boolean paid) {
+		super();
+		this.id = id;
+		this.studentId = studentId;
+		this.studentName = studentName;
+		this.dailyMenuId = dailyMenuId;
+		this.ticketType = ticketType;
+		this.ticketDate = ticketDate;
+		this.price = price;
+		this.paid = paid;
+	}
+	
+	public StudentTicket() {
+		// TODO Auto-generated constructor stub
+	}
+
+	public int getId() {
+		return id;
+	}
+	public void setId(int id) {
+		this.id = id;
+	}
+	public int getStudentId() {
+		return studentId;
+	}
+	public void setStudentId(int studentId) {
+		this.studentId = studentId;
+	}
+	public String getStudentName() {
+		return studentName;
+	}
+	public void setStudentName(String studentName) {
+		this.studentName = studentName;
+	}
+	public int getDailyMenuId() {
+		return dailyMenuId;
+	}
+	public void setDailyMenuId(int dailyMenuId) {
+		this.dailyMenuId = dailyMenuId;
+	}
+	public String getTicketType() {
+		return ticketType;
+	}
+	public void setTicketType(String ticketType) {
+		this.ticketType = ticketType;
+	}
+	public Date getTicketDate() {
+		return ticketDate;
+	}
+	public void setTicketDate(Date ticketDate) {
+		this.ticketDate = ticketDate;
+	}
+	public BigDecimal getPrice() {
+		return price;
+	}
+	public void setPrice(BigDecimal price) {
+		this.price = price;
+	}
+	public boolean isPaid() {
+		return paid;
+	}
+	public void setPaid(boolean paid) {
+		this.paid = paid;
+	}
+    
+	 
+}package canteen.demo.entity;
+
+public class Vegetable extends MenuItem {
+    public Vegetable(int id, String name) { 
+        super(id, name); 
+    }
+
+   
+}
+package canteen.demo.service;
+
+import canteen.demo.database.AdminDatabase;
+import canteen.demo.entity.Admin;
+
+public class AdminService {
+    private AdminDatabase adminDatabase;
+    
+    public AdminService(AdminDatabase adminDatabase) {
+        this.adminDatabase = adminDatabase;
+    }
+    
+    public Admin validateLogin(String email, String password) throws Exception {
+        Admin admin = adminDatabase.findAdminByEmail(email);
+        if (admin != null && admin.getAdminPassword().equals(password)) {
+            return admin;
+        }
+        return null;
+    }
+}
+package canteen.demo.service;
+
+import java.sql.SQLException;
+import java.util.List;
+import java.util.ArrayList;
+import canteen.demo.database.MenuDatabase;
+import canteen.demo.entity.*;
+import java.time.LocalDate;
+import java.sql.Date;
+
+public class MenuService {
+    private MenuDatabase menuDatabase;
+    
+    public MenuService(MenuDatabase menuDatabase) {
+        this.menuDatabase = menuDatabase;
+    }
+    
+    public List<DailyMenu> getWeeklyMenu() throws SQLException {
+        Date today = new Date(System.currentTimeMillis());
+        Date sixDaysLater = new Date(today.getTime() + (6 * 24 * 60 * 60 * 1000));
+        return getWeeklyMenu(today, sixDaysLater);
+    }
+
+    public List<DailyMenu> getWeeklyMenu(Date startDate, Date endDate) throws SQLException {
+        LocalDate start = startDate.toLocalDate();
+        while (start.getDayOfWeek().getValue() != 1) {
+            start = start.minusDays(1);
+        }
+        
+        LocalDate end = start.plusDays(5);
+        
+        List<DailyMenu> dbMenus = menuDatabase.getWeeklyMenu(
+            Date.valueOf(start), 
+            Date.valueOf(end)
+        );
+        
+        List<DailyMenu> fullWeekMenu = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            LocalDate currentDate = start.plusDays(i);
+            Date sqlCurrentDate = Date.valueOf(currentDate);
+            
+            DailyMenu dayMenu = dbMenus.stream()
+                .filter(m -> m.getMenuDate().equals(sqlCurrentDate))
+                .findFirst()
+                .orElse(new DailyMenu(sqlCurrentDate));
+            
+            fullWeekMenu.add(dayMenu);
+        }
+        
+        return fullWeekMenu;
+    }
+
+    public void createMenu(DailyMenu menu) throws SQLException {
+        menuDatabase.createMenu(menu);
+    }
+    
+    public List<Snack> getAllSnacks() throws SQLException {
+        return menuDatabase.getAllSnacks();
+    }
+    
+    public List<Appetizer> getAllAppetizers() throws SQLException {
+        return menuDatabase.getAllAppetizers();
+    }
+    
+    public List<Vegetable> getAllVegetables() throws SQLException {
+        return menuDatabase.getAllVegetables();
+    }
+    
+    public List<Protein> getAllProteins() throws SQLException {
+        return menuDatabase.getAllProteins();
+    }
+    
+    public List<Carbohydrate> getAllCarbohydrates() throws SQLException {
+        return menuDatabase.getAllCarbohydrates();
+    }
+    
+    public List<Dessert> getAllDesserts() throws SQLException {
+        return menuDatabase.getAllDesserts();
+    }
+    
+    public DailyMenu getMenuById(int menuId) throws SQLException {
+        return menuDatabase.getMenuById(menuId);
+    }
+    
+    public void updateMenu(DailyMenu menu) throws SQLException {
+        menuDatabase.updateMenu(menu);
+    }
+
+    public boolean menuExistsForDate(LocalDate date) throws SQLException {
+        return menuDatabase.menuExistsForDate(date);
+    }
+
+    public boolean isWeekAlreadyGenerated(LocalDate weekStart) throws SQLException {
+        for (int i = 0; i < 6; i++) {
+            LocalDate currentDate = weekStart.plusDays(i);
+            if (menuDatabase.menuExistsForDate(currentDate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public List<LocalDate> getExistingDaysInWeek(LocalDate weekStart) throws SQLException {
+        List<LocalDate> existingDays = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            LocalDate currentDate = weekStart.plusDays(i);
+            if (menuDatabase.menuExistsForDate(currentDate)) {
+                existingDays.add(currentDate);
+            }
+        }
+        return existingDays;
+    }
+}
+package canteen.demo.service;
+
+import java.math.BigDecimal;
+import java.sql.SQLException;
+import java.util.List;
+import java.util.ArrayList;
+import canteen.demo.database.PaymentDatabase;
+import canteen.demo.entity.*;
+
+public class PaymentService {
+    private PaymentDatabase paymentDatabase;
+    
+    public PaymentService(PaymentDatabase paymentDatabase) {
+        this.paymentDatabase = paymentDatabase;
+    }
+    
+    public List<MealTicket> getUnpaidTickets(int studentId) throws Exception {
+        List<MealTicket> tickets = paymentDatabase.getUnpaidTickets(studentId);
+        
+        for (MealTicket ticket : tickets) {
+            BigDecimal currentPrice = paymentDatabase.getCurrentPrice(ticket.getTicketType());
+        }
+        
+        return tickets;
+    }
+    
+    public PaymentTransaction processPayment(int studentId, int[] ticketIds) throws Exception {
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        List<PaymentDetail> details = new ArrayList<>();
+        
+        for (int ticketId : ticketIds) {
+            MealTicket ticket = paymentDatabase.getTicketById(ticketId);
+            if (ticket == null || ticket.getStudentId() != studentId) {
+                throw new Exception("Invalid ticket selection");
+            }
+            
+            BigDecimal price = paymentDatabase.getCurrentPrice(ticket.getTicketType());
+            totalAmount = totalAmount.add(price);
+            
+            PaymentDetail detail = new PaymentDetail();
+            detail.setTicketId(ticketId);
+            detail.setAmount(price);
+            details.add(detail);
+        }
+        
+        PaymentTransaction transaction = new PaymentTransaction();
+        transaction.setStudentId(studentId);
+        transaction.setTotalAmount(totalAmount);
+        transaction.setStatus("PENDING");
+        transaction.setDetails(details);
+        
+        boolean paymentSuccessful = processPaymentWithGateway(transaction);
+        
+        if (paymentSuccessful) {
+            transaction.setStatus("COMPLETED");
+            int transactionId = paymentDatabase.createPaymentTransaction(transaction);
+            transaction.setId(transactionId);
+        } else {
+            transaction.setStatus("FAILED");
+            throw new Exception("Payment processing failed");
+        }
+        
+        return transaction;
+    }
+    
+    private boolean processPaymentWithGateway(PaymentTransaction transaction) {
+        return true;
+    }
+
+	public List<MealTicket> getPaidTickets(int studentId) throws SQLException {
+		List<MealTicket> tickets = paymentDatabase.getPaidTickets(studentId);
+
+		for (MealTicket ticket : tickets) {
+			BigDecimal currentPrice = paymentDatabase.getCurrentPrice(ticket.getTicketType());
+		}
+
+		return tickets;
+	}
+
+	public List<StudentTicket> getStudentTickets() throws SQLException {
+		List<StudentTicket> tickets = paymentDatabase.getStudentTickets();
+
+		for (StudentTicket ticket : tickets) {
+			BigDecimal currentPrice = paymentDatabase.getCurrentPrice(ticket.getTicketType());
+		}
+
+		return tickets;
+	}
+}
+package canteen.demo.service;
+
+import java.sql.*;
+import java.util.*;
+import javax.sql.DataSource;
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import canteen.demo.entity.ConfigPrice;
+
+public class PriceService {
+    private DataSource dataSource;
+    
+    public PriceService(DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+    
+    public List<ConfigPrice> getCurrentPrices() throws SQLException {
+        String sql = "SELECT cp.* FROM config_prices cp " +
+                    "INNER JOIN (" +
+                    "    SELECT meal_type, MAX(effective_datetime) as max_datetime " +
+                    "    FROM config_prices " +
+                    "    GROUP BY meal_type" +
+                    ") latest ON cp.meal_type = latest.meal_type " +
+                    "AND cp.effective_datetime = latest.max_datetime " +
+                    "ORDER BY cp.meal_type, cp.effective_datetime DESC";
+        
+        List<ConfigPrice> prices = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            
+            while (rs.next()) {
+                ConfigPrice price = new ConfigPrice();
+                price.setId(rs.getInt("id"));
+                price.setMealType(rs.getString("meal_type"));
+                price.setPrice(rs.getBigDecimal("price"));
+                price.setEffectiveDateTime(rs.getTimestamp("effective_datetime"));
+                prices.add(price);
+            }
+        }
+        return prices;
+    }
+
+    public List<ConfigPrice> getPriceHistory(String mealType) throws SQLException {
+        String sql = "SELECT * FROM config_prices WHERE meal_type = ? " +
+                    "ORDER BY effective_datetime DESC LIMIT 10";
+                    
+        List<ConfigPrice> prices = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setString(1, mealType);
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    ConfigPrice price = new ConfigPrice();
+                    price.setId(rs.getInt("id"));
+                    price.setMealType(rs.getString("meal_type"));
+                    price.setPrice(rs.getBigDecimal("price"));
+                    price.setEffectiveDateTime(rs.getTimestamp("effective_datetime"));
+                    prices.add(price);
+                }
+            }
+        }
+        return prices;
+    }
+    
+    public void updatePrice(ConfigPrice config) throws SQLException {
+        String sql = "INSERT INTO config_prices (meal_type, price, effective_datetime) VALUES (?, ?, ?)";
+        
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setString(1, config.getMealType());
+            stmt.setBigDecimal(2, config.getPrice());
+            stmt.setTimestamp(3, new Timestamp(System.currentTimeMillis())); // Use current time
+            stmt.executeUpdate();
+        }
+    }
+}
+package canteen.demo.service;
+
+import canteen.demo.database.StudentDatabase;
+import canteen.demo.entity.Student;
+import java.util.List;
+
+public class StudentService {
+    private StudentDatabase studentDatabase;
+    
+    public StudentService(StudentDatabase studentDatabase) {
+        this.studentDatabase = studentDatabase;
+    }
+    
+    public Student validateLogin(String email, String password) throws Exception {
+        List<Student> students = studentDatabase.getStudents();
+        for(Student student : students) {
+            if(student.getEmail().equals(email) && student.getPassword().equals(password)) {
+                return student;
+            }
+        }
+        return null;
+    }
+
+    public List<Student> getAllStudents() throws Exception {
+        return studentDatabase.getStudents();
+    }
+    
+    public void createStudent(Student student) throws Exception {
+        studentDatabase.addStudent(student);
+    }
+    
+    public Student getStudentById(int id) throws Exception {
+        return studentDatabase.getStudentById(id);
+    }
+    
+    public void updateStudent(Student student) throws Exception {
+        studentDatabase.updateStudent(student);
+    }
+    
+    public boolean deleteStudent(int id) throws Exception {
+        return studentDatabase.deleteStudent(id);
+    }
+}
+package canteen.demo.service;
+
+import java.sql.Date;
+import canteen.demo.database.TicketDatabase;
+import canteen.demo.entity.MealTicket;
+
+public class TicketService {
+    private TicketDatabase ticketDatabase;
+    
+    public TicketService(TicketDatabase ticketDatabase) {
+        this.ticketDatabase = ticketDatabase;
+    }
+    
+    public void generateTicket(int studentId, int dailyMenuId, String ticketType, Date ticketDate) throws Exception {
+        if (ticketDatabase.hasTicketForDay(studentId, ticketDate, ticketType)) {
+            throw new Exception("You already have a " + ticketType.toLowerCase() + " ticket for this day");
+        }
+        
+        MealTicket ticket = new MealTicket();
+        ticket.setStudentId(studentId);
+        ticket.setDailyMenuId(dailyMenuId);
+        ticket.setTicketType(ticketType);
+        ticket.setTicketDate(ticketDate);
+        
+        ticketDatabase.createTicket(ticket);
+    }
+}

@@ -171,4 +171,60 @@ public class PaymentDatabase {
             }
         }
     }
+
+	public List<MealTicket> getPaidTickets(int studentId) throws SQLException {
+		String sql = "SELECT t.*, cp.price " + "FROM meal_tickets t "
+				+ "LEFT JOIN config_prices cp ON t.ticket_type = cp.meal_type "
+				+ "WHERE t.student_id = ? AND t.paid = true "
+				+ "AND cp.effective_datetime = (SELECT MAX(effective_datetime) " + "FROM config_prices cp2 "
+				+ "WHERE cp2.meal_type = t.ticket_type " + "AND cp2.effective_datetime <= CURRENT_TIMESTAMP)";
+
+		List<MealTicket> tickets = new ArrayList<>();
+		try (Connection conn = dataSource.getConnection(); PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+			stmt.setInt(1, studentId);
+			try (ResultSet rs = stmt.executeQuery()) {
+				while (rs.next()) {
+					MealTicket ticket = new MealTicket();
+					ticket.setId(rs.getInt("ticket_id"));
+					ticket.setStudentId(rs.getInt("student_id"));
+					ticket.setDailyMenuId(rs.getInt("daily_menu_id"));
+					ticket.setTicketType(rs.getString("ticket_type"));
+					ticket.setTicketDate(rs.getDate("ticket_date"));
+					ticket.setPaid(rs.getBoolean("paid"));
+					ticket.setPrice(rs.getBigDecimal("price"));
+					tickets.add(ticket);
+				}
+			}
+		}
+		return tickets;
+	}
+
+	public List<StudentTicket> getStudentTickets() throws SQLException {
+		String sql = "SELECT t.*, concat(s.student_firstname, \" \", s.student_lastname) as student_name, cp.price FROM meal_tickets t "
+				+ " LEFT JOIN config_prices cp ON t.ticket_type = cp.meal_type  "
+				+ " LEFT JOIN students s ON s.student_id = t.student_id "
+				+ " WHERE cp.effective_datetime = (SELECT MAX(effective_datetime) " + "FROM config_prices cp2 "
+				+ " WHERE cp2.meal_type = t.ticket_type " + "AND cp2.effective_datetime <= CURRENT_TIMESTAMP)";
+
+		List<StudentTicket> tickets = new ArrayList<>();
+		try (Connection conn = dataSource.getConnection(); PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+			try (ResultSet rs = stmt.executeQuery()) {
+				while (rs.next()) {
+					StudentTicket ticket = new StudentTicket();
+					ticket.setId(rs.getInt("ticket_id"));
+					ticket.setStudentId(rs.getInt("student_id"));
+					ticket.setStudentName(rs.getString("student_name"));
+					ticket.setDailyMenuId(rs.getInt("daily_menu_id"));
+					ticket.setTicketType(rs.getString("ticket_type"));
+					ticket.setTicketDate(rs.getDate("ticket_date"));
+					ticket.setPaid(rs.getBoolean("paid"));
+					ticket.setPrice(rs.getBigDecimal("price"));
+					tickets.add(ticket);
+				}
+			}
+		}
+		return tickets;
+	}
 }

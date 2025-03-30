@@ -1,6 +1,7 @@
 package canteen.demo.service;
 
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.ArrayList;
 import canteen.demo.database.PaymentDatabase;
@@ -65,4 +66,24 @@ public class PaymentService {
     private boolean processPaymentWithGateway(PaymentTransaction transaction) {
         return true;
     }
+
+	public List<MealTicket> getPaidTickets(int studentId) throws SQLException {
+		List<MealTicket> tickets = paymentDatabase.getPaidTickets(studentId);
+
+		for (MealTicket ticket : tickets) {
+			BigDecimal currentPrice = paymentDatabase.getCurrentPrice(ticket.getTicketType());
+		}
+
+		return tickets;
+	}
+
+	public List<StudentTicket> getStudentTickets() throws SQLException {
+		List<StudentTicket> tickets = paymentDatabase.getStudentTickets();
+
+		for (StudentTicket ticket : tickets) {
+			BigDecimal currentPrice = paymentDatabase.getCurrentPrice(ticket.getTicketType());
+		}
+
+		return tickets;
+	}
 }

@@ -35,6 +35,9 @@ public class PaymentController extends HttpServlet {
                 case "VIEW":
                     viewUnpaidTickets(request, response);
                     break;
+                case "VIEW-PAID-TICKET":
+                	viewPaidTickets(request, response);
+                    break;
                 default:
                     viewUnpaidTickets(request, response);
             }
@@ -43,7 +46,22 @@ public class PaymentController extends HttpServlet {
         }
     }
     
-    protected void doPost(HttpServletRequest request, HttpServletResponse response) 
+    private void viewPaidTickets(HttpServletRequest request, HttpServletResponse response) throws Exception {
+    	HttpSession session = request.getSession();
+        Student student = (Student) session.getAttribute("student");
+        
+        if (student == null) {
+            response.sendRedirect(request.getContextPath() + "/login");
+            return;
+        }
+        
+        List<MealTicket> paidTickets = paymentService.getPaidTickets(student.getStudentId());
+        request.setAttribute("paidTickets", paidTickets);
+        request.getRequestDispatcher("/paidticket.jsp").forward(request, response);
+		
+	}
+
+	protected void doPost(HttpServletRequest request, HttpServletResponse response) 
             throws ServletException, IOException {
         String command = request.getParameter("command");
         

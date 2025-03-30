@@ -2,24 +2,27 @@ package canteen.demo.controller;
 
 import java.io.IOException;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.List;
 
 import javax.annotation.Resource;
-import javax.servlet.RequestDispatcher;
 import javax.servlet.ServletException;
-import javax.servlet.annotation.WebServlet;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.sql.DataSource;
 
+import canteen.demo.database.PaymentDatabase;
 import canteen.demo.database.StudentDatabase;
 import canteen.demo.entity.Student;
+import canteen.demo.entity.StudentTicket;
+import canteen.demo.service.PaymentService;
 
 public class StudentController extends HttpServlet {
 	
 	private StudentDatabase studentDatabase;
+	private PaymentService paymentService;
+ 
+    
 	
 	@Resource(name="jdbc/canteen")
 	private DataSource dataSource;
@@ -29,6 +32,8 @@ public class StudentController extends HttpServlet {
 		super.init();
 		try {
 			studentDatabase = new StudentDatabase(dataSource);
+
+	        paymentService = new PaymentService(new PaymentDatabase(dataSource));
 		} catch (Exception e) {
 			throw new ServletException(e);
 		}
@@ -54,6 +59,9 @@ public class StudentController extends HttpServlet {
 				case "DELETE":
 					deleteStudent(request, response);
 					break;
+				case "VIEW-STUDENT-TICKETS":
+					viewStudentTickets(request, response);
+					break;
 				case "LIST":
 				default:
 					listStudents(request, response);
@@ -62,6 +70,14 @@ public class StudentController extends HttpServlet {
 		} catch (Exception e) {
 			throw new ServletException(e);
 		}
+	}
+
+	private void viewStudentTickets(HttpServletRequest request, HttpServletResponse response) throws SQLException, ServletException, IOException {
+        List<StudentTicket> paidTickets = paymentService.getStudentTickets();
+        request.setAttribute("studentTickets", paidTickets);
+        request.getRequestDispatcher("/studentTickets.jsp").forward(request, response);
+		
+		
 	}
 
 	protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
@@ -98,6 +114,7 @@ public class StudentController extends HttpServlet {
 	}
 
 	private void updateStudent(HttpServletRequest request, HttpServletResponse response) throws Exception {
+//convert String to integer
 		int studentId = Integer.parseInt(request.getParameter("studentId"));
 		String firstName = request.getParameter("firstName");
 		String lastName = request.getParameter("lastName");
