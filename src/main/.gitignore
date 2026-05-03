@@ -1,0 +1,14 @@
+# Build output 
+target/
+build/
+
+# Java compiled files
+*.class
+
+# Eclipse 
+.settings/
+.project
+.classpath
+
+# OS junk
+.DS_Store
